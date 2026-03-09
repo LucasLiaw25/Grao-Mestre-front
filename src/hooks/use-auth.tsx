@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from "react
 import axios from "axios";
 import type { UserResponseDTO, AuthResponseDTO, UserLoginRequestDTO, UserRegisterRequestDTO } from "@/types";
 
-const API_BASE_URL = 'http://localhost:8080/api';
+const API_BASE_URL = 'http://localhost:8081/api';
 
 interface AuthContextType {
   user: UserResponseDTO | null;
@@ -36,14 +36,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (data: UserLoginRequestDTO) => {
-    const res = await axios.post<AuthResponseDTO>(`${API_BASE_URL}/auth/login`, data);
+    const res = await axios.post<AuthResponseDTO>(`${API_BASE_URL}/users/login`, data);
     localStorage.setItem("grao_token", res.data.token);
     localStorage.setItem("grao_user", JSON.stringify(res.data.user));
     setUser(res.data.user);
   };
 
   const register = async (data: UserRegisterRequestDTO) => {
-    await axios.post(`${API_BASE_URL}/auth/register`, data);
+    await axios.post(`${API_BASE_URL}/users/register`, data);
   };
 
   const logout = () => {
