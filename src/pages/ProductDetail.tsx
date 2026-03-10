@@ -1,4 +1,5 @@
-import { useState } from "react";
+// src/pages/ProductDetail.tsx
+import { useState, useEffect } from "react"; // Adicionado useEffect
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ChevronLeft, ShoppingBag, Minus, Plus } from "lucide-react";
@@ -7,39 +8,108 @@ import { Button } from "@/components/ui/button";
 import { productsApi, ordersApi } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
-import type { ProductResponseDTO, PaymentMethod } from "@/types";
+import { type ProductResponseDTO, type PaymentMethod, type OrderResponseDTO, type OrderItemRequestDTO, OrderStatus } from "@/types";
+import { useAuth } from "@/hooks/use-auth"; // Importar o hook de autenticação
 
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user, isAuthenticated } = useAuth(); // Obter informações do usuário logado
   const [quantity, setQuantity] = useState(1);
   const productId = parseInt(id || "0");
 
+  // Fetch Product Details
   const { data: product, isLoading, error } = useQuery<ProductResponseDTO>({
     queryKey: ["products", productId],
     queryFn: async () => (await productsApi.getById(productId)).data,
     enabled: !!productId,
   });
 
+  // Fetch User's Pending Order (Cart)
+  // Este query buscará o pedido do usuário com status PENDING
+  const { data: pendingOrder, isLoading: isLoadingPendingOrder } = useQuery<OrderResponseDTO | undefined>({
+    queryKey: ["pendingOrder", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return undefined;
+      // Seu endpoint filter já permite buscar por userId e status
+      const response = await ordersApi.filter({ userId: user.id, status: OrderStatus.PENDING  });
+      // Assumimos que o backend retorna um array, e queremos o primeiro (ou único) pedido PENDING
+      return response.data?.content?.[0] || undefined;
+    },
+    enabled: isAuthenticated && !!user?.id, // Só busca se estiver autenticado e tiver ID de usuário
+    staleTime: 5 * 60 * 1000, // 5 minutos de cache para o carrinho
+    refetchOnWindowFocus: false, // Não refetch no foco da janela para evitar chamadas excessivas
+  });
+
+  // Estado para controlar se está adicionando ao carrinho
+  const [isAddingToCart, setIsAddingToCart] = useState(false);
+
+  // Mutation para criar um novo pedido (se não houver um PENDING)
   const createOrderMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (item: OrderItemRequestDTO) => {
       const response = await ordersApi.create({
-        paymentMethod: "PIX" as PaymentMethod,
-        items: [{ productId, quantity }],
+        paymentMethod: "PIX" as PaymentMethod, // Ou outro método padrão
+        items: [item],
       });
       return response.data;
     },
-    onSuccess: () => {
-      toast({ title: "Order created!", description: "Your order has been placed successfully." });
-      queryClient.invalidateQueries({ queryKey: ["orders"] });
-      setTimeout(() => navigate("/products"), 1500);
+    onSuccess: (newOrder) => {
+      toast({ title: "Product added!", description: "A new order has been started." });
+      queryClient.invalidateQueries({ queryKey: ["pendingOrder", user?.id] }); // Invalida o cache do pedido pendente
+      queryClient.invalidateQueries({ queryKey: ["orders"] }); // Invalida a lista geral de pedidos (se houver)
+      setIsAddingToCart(false);
+      // Não redireciona, para o usuário poder continuar adicionando
     },
-    onError: () => {
-      toast({ title: "Error", description: "Failed to create order. Please try again.", variant: "destructive" });
+    onError: (err) => {
+      console.error("Error creating order:", err);
+      toast({ title: "Error", description: "Failed to start new order. Please try again.", variant: "destructive" });
+      setIsAddingToCart(false);
     },
   });
+
+  // Mutation para adicionar/atualizar item em um pedido existente
+  const addItemToExistingOrderMutation = useMutation({
+    mutationFn: async (data: { orderId: number; item: OrderItemRequestDTO }) => {
+      const response = await ordersApi.addItemToOrder(data.orderId, data.item);
+      return response.data;
+    },
+    onSuccess: (updatedOrder) => {
+      toast({ title: "Product added!", description: "Item added to your existing order." });
+      queryClient.invalidateQueries({ queryKey: ["pendingOrder", user?.id] }); // Invalida o cache do pedido pendente
+      queryClient.invalidateQueries({ queryKey: ["orders"] }); // Invalida a lista geral de pedidos (se houver)
+      setIsAddingToCart(false);
+    },
+    onError: (err) => {
+      console.error("Error adding item to order:", err);
+      toast({ title: "Error", description: "Failed to add item to order. Please try again.", variant: "destructive" });
+      setIsAddingToCart(false);
+    },
+  });
+
+  const handleAddToCart = async () => {
+    if (!product || !isAuthenticated || !user?.id) {
+      toast({ title: "Error", description: "Please log in to add products to your cart.", variant: "destructive" });
+      navigate("/login"); // Redireciona para login se não estiver autenticado
+      return;
+    }
+
+    setIsAddingToCart(true);
+
+    const orderItem: OrderItemRequestDTO = {
+      productId: productId,
+      quantity: quantity,
+    };
+
+    if (pendingOrder) {
+      // Se já existe um pedido PENDING, adiciona o item a ele
+      addItemToExistingOrderMutation.mutate({ orderId: pendingOrder.id, item: orderItem });
+    } else {
+      // Se não existe um pedido PENDING, cria um novo
+      createOrderMutation.mutate(orderItem);
+    }
+  };
 
   if (error) {
     return (
@@ -67,7 +137,7 @@ export default function ProductDetail() {
           <span className="font-medium">Back to Products</span>
         </motion.button>
 
-        {isLoading ? (
+        {isLoading || isLoadingPendingOrder ? ( // Adicionado isLoadingPendingOrder
           <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
             <div className="aspect-[4/5] bg-muted animate-pulse rounded-2xl" />
             <div className="space-y-8">
@@ -151,13 +221,13 @@ export default function ProductDetail() {
                 </div>
 
                 <Button
-                  onClick={() => createOrderMutation.mutate()}
-                  disabled={product.storage <= 0 || createOrderMutation.isPending}
+                  onClick={handleAddToCart} // Chama a nova função
+                  disabled={product.storage <= 0 || isAddingToCart}
                   size="lg"
                   className="w-full gap-2"
                 >
                   <ShoppingBag className="w-5 h-5" />
-                  {createOrderMutation.isPending ? "Adding to Order..." : "Add to Order"}
+                  {isAddingToCart ? "Adding to Cart..." : "Add to Cart"}
                 </Button>
 
                 <p className="text-xs text-muted-foreground text-center">

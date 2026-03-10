@@ -1,13 +1,17 @@
+// src/components/Navbar.tsx
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { ShoppingBag, Menu, X, User, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
+import { useQuery } from "@tanstack/react-query"; // Importar useQuery
+import { ordersApi } from "@/lib/api"; // Importar ordersApi
+import type { OrderResponseDTO, OrderStatus } from "@/types"; // Importar tipos
 
 export function Navbar() {
   const location = useLocation();
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, logout, user } = useAuth(); // Obter user do useAuth
   const { scrollY } = useScroll();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -38,9 +42,26 @@ export function Navbar() {
       };
 
   const navLinks = [
-    { to: "/", label: "Story" },
-    { to: "/products", label: "Shop Coffee" },
+    { to: "/", label: "Home" },
+    { to: "/products", label: "Shop Products" },
   ];
+
+  // NOVO: Query para buscar o pedido PENDING do usuário (carrinho)
+  const { data: pendingOrder } = useQuery<OrderResponseDTO | undefined>({
+    queryKey: ["pendingOrder", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return undefined;
+      const response = await ordersApi.filter({ userId: user.id, status: "PENDING" as OrderStatus });
+      return response.data?.content?.[0] || undefined;
+    },
+    enabled: isAuthenticated && !!user?.id,
+    staleTime: 0, // Queremos que o carrinho esteja sempre atualizado
+    refetchInterval: 10 * 1000, // Refetch a cada 10 segundos para manter o contador atualizado
+    refetchOnWindowFocus: true, // Refetch no foco da janela
+  });
+
+  // Calcula a quantidade total de itens no carrinho
+  const cartItemCount = pendingOrder?.items?.reduce((sum, item) => sum + item.quantity, 0) || 0;
 
   return (
     <>
@@ -79,13 +100,13 @@ export function Navbar() {
 
             <div className="hidden md:flex items-center space-x-6">
               {isAuthenticated ? (
-                <button
-                  onClick={logout}
+                <Link
+                  to="/account"
                   className="text-muted-foreground hover:text-primary transition-colors flex items-center gap-2 text-sm font-medium"
                 >
-                  <LogOut className="w-4 h-4" />
-                  Sign Out
-                </button>
+                  <User className="w-4 h-4" />
+                  Minha Conta
+                </Link>
               ) : (
                 <Link
                   to="/login"
@@ -97,12 +118,34 @@ export function Navbar() {
               )}
               <Link to="/orders" className="relative p-2 text-foreground hover:text-primary transition-colors hover:-translate-y-0.5 transform duration-200">
                 <ShoppingBag className="w-5 h-5" />
+                {cartItemCount > 0 && (
+                  <motion.span
+                    key={cartItemCount} // Key para animar a mudança do número
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center"
+                  >
+                    {cartItemCount}
+                  </motion.span>
+                )}
               </Link>
             </div>
 
             <div className="flex md:hidden items-center gap-4">
               <Link to="/orders" className="relative p-2 text-foreground">
                 <ShoppingBag className="w-5 h-5" />
+                {cartItemCount > 0 && (
+                  <motion.span
+                    key={cartItemCount}
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center"
+                  >
+                    {cartItemCount}
+                  </motion.span>
+                )}
               </Link>
               <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 -mr-2 text-foreground">
                 {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}

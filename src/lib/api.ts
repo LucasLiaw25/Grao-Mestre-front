@@ -8,6 +8,7 @@ import type {
     AddressResponseDTO, AddressRequestDTO,
     ScopeResponseDTO, ScopeRequestDTO,
     OrderStatus, PaymentStatus, TimePeriod, TimeRange,
+    OrderItemRequestDTO,
 } from "@/types";
 
 const API_BASE_URL = 'http://localhost:8081/api';
@@ -36,11 +37,7 @@ apiClient.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response?.status === 401 || error.response?.status === 403) {
-            console.warn("Unauthorized or expired token. Logging out...");
-            localStorage.removeItem("grao_token");
-            localStorage.removeItem("grao_user");
-            window.dispatchEvent(new Event("auth-changed"));
-            window.location.href = "/login";
+            console.warn("Requisição não autorizada ou proibida. Verifique as permissões ou o token.");
         }
         return Promise.reject(error);
     }
@@ -108,6 +105,10 @@ export const ordersApi = {
     filter: (params: { status?: OrderStatus; startDate?: string; endDate?: string; userId?: number; page?: number; size?: number; sort?: string }) => apiClient.get<any>("/orders/filter", { params }),
     getOrderDetailsForAdmin: (orderId: number) => apiClient.get<OrderResponseDTO>(`/orders/${orderId}`),
     updateOrderStatus: (orderId: number, newStatus: OrderStatus) => apiClient.put<OrderResponseDTO>(`/orders/${orderId}/status`, null, { params: { newStatus } }),
+    // Métodos para gerenciamento de itens no pedido (carrinho)
+    addItemToOrder: (orderId: number, item: OrderItemRequestDTO) => apiClient.post<OrderResponseDTO>(`/orders/${orderId}/items`, item),
+    removeItemFromOrder: (orderId: number, orderItemId: number) => apiClient.delete<OrderResponseDTO>(`/orders/${orderId}/items/${orderItemId}`),
+    updateOrderItemQuantity: (orderId: number, orderItemId: number, quantity: number) => apiClient.put<OrderResponseDTO>(`/orders/${orderId}/items/${orderItemId}/quantity`, null, { params: { quantity } }),
 };
 
 export const addressesApi = {

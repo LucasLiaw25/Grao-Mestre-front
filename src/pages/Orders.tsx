@@ -1,16 +1,110 @@
-import { useQuery } from "@tanstack/react-query";
+// src/pages/Orders.tsx
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ordersApi } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
 import { Footer } from "@/components/Footer";
-import { Package, Clock } from "lucide-react";
-import type { OrderResponseDTO } from "@/types";
+import { Package, Clock, Minus, Plus, Trash2, ShoppingBag, CheckCircle } from "lucide-react";
+import type { OrderResponseDTO, OrderStatus } from "@/types";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { useNavigate } from "react-router-dom"; // Para redirecionar após finalizar compra
 
 export default function Orders() {
-  const { data: orders, isLoading } = useQuery<OrderResponseDTO[]>({
-    queryKey: ["orders", "my"],
-    queryFn: async () => (await ordersApi.getMyOrderHistory()).data,
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const navigate = useNavigate();
+
+  // Query para buscar o pedido PENDING (carrinho)
+  const { data: pendingOrder, isLoading: isLoadingPendingOrder } = useQuery<OrderResponseDTO | undefined>({
+    queryKey: ["pendingOrder"], // Não precisa do user.id aqui, pois o interceptor já cuida
+    queryFn: async () => {
+      const response = await ordersApi.getMyOrdersByStatus("PENDING" as OrderStatus);
+      // Acessa a propriedade 'data' da resposta do Axios
+      return response.data.length > 0 ? response.data[0] : undefined;
+    },
+    staleTime: 0, // Sempre atualizado
+    refetchOnWindowFocus: true,
   });
+
+  // Query para buscar o histórico de pedidos (não PENDING)
+  const { data: orderHistory, isLoading: isLoadingOrderHistory } = useQuery<OrderResponseDTO[]>({
+    queryKey: ["orderHistory"],
+    queryFn: async () => {
+      const response = await ordersApi.getMyOrderHistory();
+      // Acessa a propriedade 'data' da resposta do Axios e então filtra
+      const allOrders = response.data;
+      // Filtra para remover o pedido PENDING do histórico
+      return allOrders.filter(order => order.orderStatus !== "PENDING");
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const removeItemMutation = useMutation({
+    mutationFn: ({ orderId, orderItemId }: { orderId: number; orderItemId: number }) =>
+      ordersApi.removeItemFromOrder(orderId, orderItemId),
+    onSuccess: () => {
+      toast({ title: "Item Removed", description: "Product removed from your cart." });
+      queryClient.invalidateQueries({ queryKey: ["pendingOrder"] });
+      queryClient.invalidateQueries({ queryKey: ["orderHistory"] }); // Pode afetar o histórico se o carrinho ficar vazio
+    },
+    onError: (err) => {
+      console.error("Error removing item:", err);
+      toast({ title: "Error", description: "Failed to remove item. Please try again.", variant: "destructive" });
+    },
+  });
+
+  // Mutation para atualizar a quantidade de um item no carrinho
+  const updateQuantityMutation = useMutation({
+    mutationFn: ({ orderId, orderItemId, quantity }: { orderId: number; orderItemId: number; quantity: number }) =>
+      ordersApi.updateOrderItemQuantity(orderId, orderItemId, quantity),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pendingOrder"] });
+      // Não mostra toast para cada mudança de quantidade, para não ser intrusivo
+    },
+    onError: (err) => {
+      console.error("Error updating quantity:", err);
+      toast({ title: "Error", description: "Failed to update quantity. Please try again.", variant: "destructive" });
+    },
+  });
+
+  // Mutation para finalizar a compra (mudar status de PENDING para PROCESSING/PAID)
+  const finalizeOrderMutation = useMutation({
+    mutationFn: (orderId: number) =>
+      ordersApi.updateOrderStatus(orderId, "PAID" as OrderStatus), // Ou "PROCESSING"
+    onSuccess: () => {
+      toast({ title: "Order Placed!", description: "Your order has been successfully placed." });
+      queryClient.invalidateQueries({ queryKey: ["pendingOrder"] });
+      queryClient.invalidateQueries({ queryKey: ["orderHistory"] });
+      navigate("/orders"); // Opcional: redirecionar para a própria página de orders para ver o histórico
+    },
+    onError: (err) => {
+      console.error("Error finalizing order:", err);
+      toast({ title: "Error", description: "Failed to finalize order. Please try again.", variant: "destructive" });
+    },
+  });
+
+  const handleRemoveItem = (orderId: number, orderItemId: number) => {
+    removeItemMutation.mutate({ orderId, orderItemId });
+  };
+
+  const handleUpdateQuantity = (orderId: number, orderItemId: number, currentQuantity: number, change: number) => {
+    const newQuantity = currentQuantity + change;
+    if (newQuantity < 1) {
+      // Se a quantidade for menor que 1, remove o item
+      handleRemoveItem(orderId, orderItemId);
+    } else {
+      updateQuantityMutation.mutate({ orderId, orderItemId, quantity: newQuantity });
+    }
+  };
+
+  const handleFinalizeOrder = () => {
+    if (pendingOrder && pendingOrder.id) {
+      finalizeOrderMutation.mutate(pendingOrder.id);
+    } else {
+      toast({ title: "Error", description: "No items in your cart to finalize.", variant: "destructive" });
+    }
+  };
 
   const statusColor: Record<string, string> = {
     PENDING: "bg-yellow-100 text-yellow-800",
@@ -22,63 +116,153 @@ export default function Orders() {
     RECUSE: "bg-red-100 text-red-800",
   };
 
+  const isLoadingAny = isLoadingPendingOrder || isLoadingOrderHistory;
+
   return (
     <div className="min-h-screen bg-background">
       <section className="pt-28 pb-12 bg-muted/30 border-b border-border/50">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
             <span className="section-label">My Account</span>
-            <h1 className="section-title">Order History</h1>
+            <h1 className="section-title">My Orders</h1>
           </motion.div>
         </div>
       </section>
 
       <section className="py-16">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-          {isLoading ? (
-            [1, 2, 3].map((i) => (
-              <div key={i} className="h-32 bg-muted animate-pulse rounded-2xl" />
-            ))
-          ) : orders && orders.length > 0 ? (
-            orders.map((order, i) => (
-              <motion.div
-                key={order.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.1 }}
-                className="glass-card p-6"
-              >
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Order #{order.id}</p>
-                    <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                      <Clock className="w-3 h-3" />
-                      {new Date(order.orderDate).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${statusColor[order.orderStatus] || "bg-muted text-muted-foreground"}`}>
-                      {order.orderStatus}
-                    </span>
-                    <span className="text-lg font-bold text-foreground">{formatCurrency(order.totalPrice)}</span>
-                  </div>
-                </div>
-                <div className="border-t border-border/50 pt-4 space-y-2">
-                  {order.items.map((item) => (
-                    <div key={item.id} className="flex justify-between text-sm">
-                      <span className="text-foreground">{item.productName} × {item.quantity}</span>
-                      <span className="text-muted-foreground">{formatCurrency(item.subtotal)}</span>
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+          {/* Carrinho Pendente */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="glass-card p-6"
+          >
+            <h2 className="font-serif text-2xl font-bold text-foreground mb-6 flex items-center gap-2">
+              <ShoppingBag className="w-6 h-6 text-primary" /> Your Cart
+            </h2>
+
+            {isLoadingPendingOrder ? (
+              <div className="h-24 bg-muted animate-pulse rounded-xl" />
+            ) : pendingOrder && pendingOrder.items && pendingOrder.items.length > 0 ? (
+              <div className="space-y-4">
+                {pendingOrder.items.map((item) => (
+                  <div key={item.id} className="flex items-center justify-between border-b border-border/50 pb-4 last:border-b-0 last:pb-0">
+                    <div className="flex-1">
+                      <p className="font-medium text-foreground">{item.productName}</p>
+                      <p className="text-sm text-muted-foreground">{formatCurrency(item.priceAtTime)} each</p>
                     </div>
-                  ))}
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => handleUpdateQuantity(pendingOrder.id, item.id, item.quantity, -1)}
+                        disabled={removeItemMutation.isPending || updateQuantityMutation.isPending}
+                        className="p-1 hover:bg-muted rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <span className="w-8 text-center font-semibold text-foreground">{item.quantity}</span>
+                      <button
+                        onClick={() => handleUpdateQuantity(pendingOrder.id, item.id, item.quantity, 1)}
+                        disabled={removeItemMutation.isPending || updateQuantityMutation.isPending}
+                        className="p-1 hover:bg-muted rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleRemoveItem(pendingOrder.id, item.id)}
+                        disabled={removeItemMutation.isPending || updateQuantityMutation.isPending}
+                        className="text-destructive hover:bg-destructive/10"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex justify-between items-center pt-4 border-t border-border/50">
+                  <span className="text-lg font-bold text-foreground">Total:</span>
+                  <span className="text-2xl font-bold text-primary">{formatCurrency(pendingOrder.totalPrice)}</span>
                 </div>
-              </motion.div>
-            ))
-          ) : (
-            <div className="text-center py-20">
-              <Package className="w-16 h-16 text-muted-foreground mx-auto mb-6 opacity-50" />
-              <p className="text-xl text-muted-foreground font-serif">No orders yet.</p>
-            </div>
-          )}
+                <Button
+                  onClick={handleFinalizeOrder}
+                  disabled={finalizeOrderMutation.isPending || pendingOrder.items.length === 0}
+                  className="w-full mt-6 gap-2"
+                  size="lg"
+                >
+                  <CheckCircle className="w-5 h-5" />
+                  {finalizeOrderMutation.isPending ? "Finalizing Order..." : "Finalize Order"}
+                </Button>
+              </div>
+            ) : (
+              <div className="text-center py-10">
+                <ShoppingBag className="w-16 h-16 text-muted-foreground mx-auto mb-6 opacity-50" />
+                <p className="text-xl text-muted-foreground font-serif">Your cart is empty.</p>
+                <Button onClick={() => navigate("/products")} className="mt-6">
+                  Start Shopping
+                </Button>
+              </div>
+            )}
+          </motion.div>
+
+          {/* Histórico de Pedidos */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="glass-card p-6"
+          >
+            <h2 className="font-serif text-2xl font-bold text-foreground mb-6 flex items-center gap-2">
+              <Clock className="w-6 h-6 text-muted-foreground" /> Order History
+            </h2>
+
+            {isLoadingOrderHistory ? (
+              [1, 2].map((i) => (
+                <div key={i} className="h-32 bg-muted animate-pulse rounded-xl mb-4" />
+              ))
+            ) : orderHistory && orderHistory.length > 0 ? (
+              <div className="space-y-6">
+                {orderHistory.map((order, i) => (
+                  <motion.div
+                    key={order.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="border border-border/50 rounded-xl p-4 bg-background"
+                  >
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-3">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Order #{order.id}</p>
+                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                          <Clock className="w-3 h-3" />
+                          {new Date(order.orderDate).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${statusColor[order.orderStatus] || "bg-muted text-muted-foreground"}`}>
+                          {order.orderStatus}
+                        </span>
+                        <span className="text-lg font-bold text-foreground">{formatCurrency(order.totalPrice)}</span>
+                      </div>
+                    </div>
+                    <div className="border-t border-border/30 pt-3 space-y-1">
+                      {order.items.map((item) => (
+                        <div key={item.id} className="flex justify-between text-sm">
+                          <span className="text-foreground">{item.productName} × {item.quantity}</span>
+                          <span className="text-muted-foreground">{formatCurrency(item.subtotal)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-10">
+                <Package className="w-16 h-16 text-muted-foreground mx-auto mb-6 opacity-50" />
+                <p className="text-xl text-muted-foreground font-serif">No past orders found.</p>
+              </div>
+            )}
+          </motion.div>
         </div>
       </section>
 

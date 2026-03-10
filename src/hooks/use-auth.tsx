@@ -1,3 +1,4 @@
+// FILE NAME: useauth.tsx
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import axios from "axios";
 import type { UserResponseDTO, AuthResponseDTO, UserLoginRequestDTO, UserRegisterRequestDTO } from "@/types";
@@ -40,10 +41,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("grao_token", res.data.token);
     localStorage.setItem("grao_user", JSON.stringify(res.data.user));
     setUser(res.data.user);
+    window.dispatchEvent(new Event("auth-changed")); // Notifica outros componentes
   };
 
   const register = async (data: UserRegisterRequestDTO) => {
     await axios.post(`${API_BASE_URL}/users/register`, data);
+    // Após o registro, o usuário precisará ativar a conta via e-mail,
+    // então não fazemos login automático aqui.
   };
 
   const logout = () => {

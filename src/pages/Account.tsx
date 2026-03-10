@@ -1,25 +1,29 @@
-// src/pages/Account.tsx
+// FILE NAME: Account.tsx
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Save, X, KeyRound, Plus, Trash2, MapPin } from "lucide-react";
-import { Button } from "@/components/ui/button"; // Assumindo que você tem um componente Button
-import { useToast } from "@/hooks/use-toast"; // Assumindo que você tem um hook useToast
+import { Pencil, Save, X, KeyRound, Plus, Trash2, MapPin, LogOut, LayoutDashboard } from "lucide-react"; // Adicionado LogOut e LayoutDashboard
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 import { usersApi, addressesApi } from "@/lib/api";
 import type { UserResponseDTO, UserRequestDTO, AddressResponseDTO, AddressRequestDTO } from "@/types";
 import { Footer } from "@/components/Footer";
 import { AddressForm } from "@/components/AddressForm";
-
+import { Link, useNavigate } from "react-router-dom"; // Importar Link e useNavigate
+import { useAuth } from "@/hooks/use-auth";
 
 export default function Account() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const userId = 1; // Mock user ID for now, replace with actual user ID from auth context
+  const { user: authUser, logout, isLoading: isLoadingAuth } = useAuth(); // Obter user e logout do useAuth
+  const navigate = useNavigate();
+
+  const userId = authUser?.id; // Usar o ID do usuário autenticado
 
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileFormData, setProfileFormData] = useState<Partial<UserRequestDTO>>({});
   const [passwordFormData, setPasswordFormData] = useState({
-    currentPassword: "",
+    currentPassword: "", // Mantido para compatibilidade, mas não usado no formulário atual
     newPassword: "",
     confirmNewPassword: "",
   });
@@ -31,15 +35,15 @@ export default function Account() {
   // Fetch user data
   const { data: user, isLoading: isLoadingUser } = useQuery<UserResponseDTO>({
     queryKey: ["user", userId],
-    queryFn: async () => (await usersApi.getById(userId)).data,
-    enabled: !!userId,
+    queryFn: async () => (await usersApi.getById(userId!)).data, // Usar userId! para garantir que não é undefined
+    enabled: !!userId, // Habilitar a query apenas se userId existir
   });
 
   // Fetch addresses
   const { data: addresses, isLoading: isLoadingAddresses } = useQuery<AddressResponseDTO[]>({
     queryKey: ["addresses", userId],
-    queryFn: async () => (await addressesApi.getByUserId(userId)).data,
-    enabled: !!userId,
+    queryFn: async () => (await addressesApi.getByUserId(userId!)).data, // Usar userId!
+    enabled: !!userId, // Habilitar a query apenas se userId existir
   });
 
   useEffect(() => {
@@ -52,28 +56,39 @@ export default function Account() {
     }
   }, [user]);
 
+  // Checa se o usuário é ADMIN
+  const isAdmin = authUser?.scopes?.some(scope => scope.name === "ADMIN");
+  // Checa se já existe algum endereço cadastrado
+  const hasAddresses = addresses && addresses.length > 0;
+
   // Mutations for User Profile
   const updateUserMutation = useMutation({
-    mutationFn: (data: UserRequestDTO) => usersApi.update(userId, data),
+    mutationFn: (data: UserRequestDTO) => usersApi.update(userId!, data), // Usar userId!
     onSuccess: () => {
       toast({ title: "Success", description: "Profile updated successfully." });
       queryClient.invalidateQueries({ queryKey: ["user", userId] });
       setIsEditingProfile(false);
+      // Atualiza o user no localStorage para refletir as mudanças no nome/email
+      if (user) {
+        const updatedUser = { ...user, ...profileFormData };
+        localStorage.setItem("grao_user", JSON.stringify(updatedUser));
+        window.dispatchEvent(new Event("auth-changed")); // Notifica o AuthProvider
+      }
     },
-    onError: (error) => {
-      toast({ title: "Error", description: `Failed to update profile: ${error.message}`, variant: "destructive" });
+    onError: (error: any) => { // Tipagem mais genérica para erro
+      toast({ title: "Error", description: `Failed to update profile: ${error.response?.data?.message || error.message}`, variant: "destructive" });
     },
   });
 
   const updatePasswordMutation = useMutation({
-    mutationFn: (newPassword: string) => usersApi.updatePassword(userId, newPassword),
+    mutationFn: (newPassword: string) => usersApi.updatePassword(userId!, newPassword), // Usar userId!
     onSuccess: () => {
       toast({ title: "Success", description: "Password updated successfully." });
       setPasswordFormData({ currentPassword: "", newPassword: "", confirmNewPassword: "" });
       setIsEditingPassword(false);
     },
-    onError: (error) => {
-      toast({ title: "Error", description: `Failed to update password: ${error.message}`, variant: "destructive" });
+    onError: (error: any) => { // Tipagem mais genérica para erro
+      toast({ title: "Error", description: `Failed to update password: ${error.response?.data?.message || error.message}`, variant: "destructive" });
     },
   });
 
@@ -85,8 +100,8 @@ export default function Account() {
       queryClient.invalidateQueries({ queryKey: ["addresses", userId] });
       setShowAddressForm(false);
     },
-    onError: (error) => {
-      toast({ title: "Error", description: `Failed to add address: ${error.message}`, variant: "destructive" });
+    onError: (error: any) => { // Tipagem mais genérica para erro
+      toast({ title: "Error", description: `Failed to add address: ${error.response?.data?.message || error.message}`, variant: "destructive" });
     },
   });
 
@@ -98,8 +113,8 @@ export default function Account() {
       setShowAddressForm(false);
       setEditingAddress(undefined);
     },
-    onError: (error) => {
-      toast({ title: "Error", description: `Failed to update address: ${error.message}`, variant: "destructive" });
+    onError: (error: any) => { // Tipagem mais genérica para erro
+      toast({ title: "Error", description: `Failed to update address: ${error.response?.data?.message || error.message}`, variant: "destructive" });
     },
   });
 
@@ -109,8 +124,8 @@ export default function Account() {
       toast({ title: "Success", description: "Address deleted successfully." });
       queryClient.invalidateQueries({ queryKey: ["addresses", userId] });
     },
-    onError: (error) => {
-      toast({ title: "Error", description: `Failed to delete address: ${error.message}`, variant: "destructive" });
+    onError: (error: any) => { // Tipagem mais genérica para erro
+      toast({ title: "Error", description: `Failed to delete address: ${error.response?.data?.message || error.message}`, variant: "destructive" });
     },
   });
 
@@ -137,7 +152,6 @@ export default function Account() {
       toast({ title: "Error", description: "New passwords do not match.", variant: "destructive" });
       return;
     }
-    // In a real app, you'd send currentPassword for validation
     if (userId) {
       updatePasswordMutation.mutate(passwordFormData.newPassword);
     }
@@ -154,10 +168,15 @@ export default function Account() {
   };
 
   const handleSaveAddress = (data: AddressRequestDTO) => {
+    if (!userId) {
+      toast({ title: "Error", description: "User not authenticated.", variant: "destructive" });
+      return;
+    }
+    const addressDataWithUserId = { ...data, userId: userId }; // Garante que userId é enviado
     if (editingAddress) {
-      updateAddressMutation.mutate({ id: editingAddress.id, data });
+      updateAddressMutation.mutate({ id: editingAddress.id, data: addressDataWithUserId });
     } else {
-      createAddressMutation.mutate(data);
+      createAddressMutation.mutate(addressDataWithUserId);
     }
   };
 
@@ -166,6 +185,31 @@ export default function Account() {
       deleteAddressMutation.mutate(id);
     }
   };
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login"); // Redireciona para a página de login após o logout
+  };
+
+  if (isLoadingAuth || isLoadingUser) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <svg className="animate-spin h-10 w-10 text-primary mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <p className="text-lg text-muted-foreground">Loading account details...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    // Se o usuário não estiver autenticado, redireciona para o login
+    navigate("/login");
+    return null; // Ou um spinner/mensagem de carregamento
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -179,6 +223,16 @@ export default function Account() {
           >
             <span className="section-label">Your Account</span>
             <h1 className="section-title mb-8">Manage Profile & Addresses</h1>
+            <div className="flex flex-wrap gap-4 mt-6">
+              {isAdmin && (
+                <Link to="/dashboard" className="btn-hero-primary flex items-center gap-2 px-6 py-3 text-base">
+                  <LayoutDashboard className="w-5 h-5" /> Dashboard
+                </Link>
+              )}
+              <Button onClick={handleLogout} variant="destructive" className="flex items-center gap-2 px-6 py-3 text-base">
+                <LogOut className="w-5 h-5" /> Logout
+              </Button>
+            </div>
           </motion.div>
         </div>
       </section>
@@ -383,16 +437,19 @@ export default function Account() {
         >
           <div className="flex justify-between items-center mb-6">
             <h2 className="font-serif text-3xl font-bold text-foreground">My Addresses</h2>
-            <Button onClick={handleAddAddressClick} disabled={showAddressForm}>
-              <Plus className="w-4 h-4 mr-2" /> Add New Address
-            </Button>
+            {/* Condicional para o botão "Add New Address" */}
+            {!hasAddresses && !showAddressForm && (
+              <Button onClick={handleAddAddressClick} disabled={showAddressForm}>
+                <Plus className="w-4 h-4 mr-2" /> Add New Address
+              </Button>
+            )}
           </div>
 
           <AnimatePresence mode="wait">
             {showAddressForm && (
               <AddressForm
-                key={editingAddress?.id || "new-address"} // Key helps AnimatePresence detect component change
-                userId={userId}
+                key={editingAddress?.id || "new-address"}
+                userId={userId!} // Passa o userId real
                 address={editingAddress}
                 onSave={handleSaveAddress}
                 onCancel={() => {

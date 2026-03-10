@@ -16,6 +16,7 @@ import ProductManagement from "./pages/ProductManagement";
 import Account from "./pages/Account";
 import UserManagement from "./pages/UserManagement";
 import CategoryManagement from "./pages/CategoryManagement";
+import { DashboardLayout } from "./pages/DashboardLayout";
 
 const queryClient = new QueryClient();
 
@@ -35,15 +36,28 @@ const App = () => (
             <Route path="/register" element={<Register />} />
             <Route path="/orders" element={<Orders />} />
             <Route path="*" element={<NotFound />} />
-            <Route path="/product-management" element={<ProductManagement />} />
             <Route path="/account" element={<Account />} />
-            <Route path="/user-management" element={<UserManagement />} />
-            <Route path="/category-management" element={<CategoryManagement />} />
+            <Route path="/dashboard" element={<DashboardLayout />}>
+              <Route index element={<DashboardOverview />} />
+              <Route path="user-management" element={<UserManagement />} />
+              <Route path="category-management" element={<CategoryManagement />} />
+              <Route path="product-management" element={<ProductManagement />} />
+            </Route>
           </Routes>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
 );
+
+function DashboardOverview() {
+  return (
+    <div className="p-8">
+      <h1 className="font-serif text-3xl font-bold text-foreground mb-6">Welcome to your Admin Dashboard!</h1>
+      <p className="text-muted-foreground">Use the sidebar to navigate through management sections.</p>
+    </div>
+  );
+}
+
 
 export default App;
